@@ -4,10 +4,11 @@ from sentry.runner import configure
 configure()
 
 import logging
+from datetime import timedelta
 
 from sentry.constants import DEFAULT_LOGGER_NAME, LOG_LEVELS_MAP
 from sentry.event_manager import ScoreClause, generate_culprit, get_hashes_for_event, md5_from_hash
-from sentry.models import Event, EventMapping, Group, GroupHash, GroupTagKey, GroupTagValue, Release, UserReport
+from sentry.models import Event, EventMapping, Group, GroupHash, GroupRelease, GroupTagKey, GroupTagValue, Release, UserReport
 
 
 def get_events(hashes):
@@ -64,10 +65,28 @@ def get_group_attributes(events):
 def get_group_releases(events):
     def process_event(releases, event):
         release = event.get_tag('sentry:release')
-        if not release or release in releases:
+
+        # XXX: literally no idea what the canonical source is for this btwn the
+        # tag and data attr
+        environment = event.data.get('environment', '')  # XXX: not nullable lmao
+
+        key = (environment, release)
+        if not release:
             return releases
 
-        raise NotImplementedError  # create release
+        if key in releases:
+            last_seen = releases[key]['last_seen']
+            releases[key]['last_seen'] = event.datetime if last_seen < event.datetime - timedelta(seconds=60) else last_seen
+        else:
+            releases[key] = {
+                'environment': environment,
+                'first_seen': event.datetime,
+                'last_seen': event.datetime,
+                'release_id': Release.objects.get(
+                    organization_id=event.project.organization_id,
+                    version=release,
+                ).id,
+            }
 
         return releases
 
@@ -116,7 +135,7 @@ def unmerge(hashes):
     event_id_set = set(event.event_id for event in events)
 
     EventMapping.objects.filter(
-        project=group.project,
+        project_id=group.project_id,
         event_id__in=event_id_set,
     ).update(group_id=group.id)
 
@@ -126,7 +145,13 @@ def unmerge(hashes):
     ).update(group=group)
 
     for attributes in get_group_releases(events):
-        GroupRelease.objects.create(**attributes)
+        # TODO: technically this should also adjust the timestamps for
+        # ReleaseEnvironment too
+        GroupRelease.objects.create(
+            project_id=group.project_id,
+            group_id=group.id,
+            **attributes
+        )
 
     for key, values in get_tag_data(events).items():
         GroupTagKey.objects.create(
