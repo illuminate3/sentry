@@ -7,7 +7,7 @@ import logging
 
 from sentry.constants import DEFAULT_LOGGER_NAME, LOG_LEVELS_MAP
 from sentry.event_manager import ScoreClause, generate_culprit, get_hashes_for_event, md5_from_hash
-from sentry.models import Event, Group, GroupHash, GroupTagKey, GroupTagValue, Release
+from sentry.models import Event, EventMapping, Group, GroupHash, GroupTagKey, GroupTagValue, Release, UserReport
 
 
 def get_events(hashes):
@@ -109,8 +109,21 @@ def unmerge(hashes):
     GroupHash.objects.filter(id__in=[hash.id for hash in hashes]).update(group=group)
 
     # - decrement old times seen
+    # - fix old first, last seen
 
     Event.objects.filter(id__in=[event.id for event in events]).update(group_id=group.id)
+
+    event_id_set = set(event.event_id for event in events)
+
+    EventMapping.objects.filter(
+        project=group.project,
+        event_id__in=event_id_set,
+    ).update(group_id=group.id)
+
+    UserReport.objects.filter(
+        project=group.project,
+        event_id__in=event_id_set,
+    ).update(group=group)
 
     for attributes in get_group_releases(events):
         GroupRelease.objects.create(**attributes)
@@ -142,9 +155,5 @@ def unmerge(hashes):
     # - decrement old group
     # - increment new frequency tables
     # - increment new distinct counter
-
-    # TODO: move user reports
-
-    # TODO: handle EventMapping ???
 
     # TODO: activity thing for both groups
