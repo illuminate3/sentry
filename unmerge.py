@@ -109,7 +109,7 @@ def unmerge(hashes):
     GroupHash.objects.filter(id__in=[hash.id for hash in hashes]).update(group=group)
 
     # - decrement old times seen
-    # - fix old first, last seen
+    # - fix old group attributes
 
     Event.objects.filter(id__in=[event.id for event in events]).update(group_id=group.id)
 
@@ -149,6 +149,8 @@ def unmerge(hashes):
 
             # TODO: decrement, possibly delete old tag records, also fix
             # first/last seen on these bad boys
+
+    # TODO: how the fuck to even deal with EventTag
 
     # TODO: tsdb
     # - increment new group
