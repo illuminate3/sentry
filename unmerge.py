@@ -61,6 +61,23 @@ def get_group_attributes(events):
     )
 
 
+def get_group_releases(events):
+    def process_event(releases, event):
+        release = event.get_tag('sentry:release')
+        if not release or release in releases:
+            return releases
+
+        raise NotImplementedError  # create release
+
+        return releases
+
+    return reduce(
+        process_event,
+        events,
+        {},
+    ).values()
+
+
 def get_tag_data(events):
     def update_tags(tags, event):
         for key, value in event.get_tags():
@@ -95,7 +112,8 @@ def unmerge(hashes):
 
     Event.objects.filter(id__in=[event.id for event in events]).update(group_id=group.id)
 
-    # TODO: create GroupRelease records
+    for attributes in get_group_releases(events):
+        GroupRelease.objects.create(**attributes)
 
     for key, values in get_tag_data(events).items():
         GroupTagKey.objects.create(
