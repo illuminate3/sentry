@@ -134,11 +134,11 @@ def get_tag_data(events):
 
 def get_tsdb_data(events):
     def collector((counters, sets, frequencies), (event, grouprelease)):
-        counters[tsdb.models.group][event.datetime] += 1
+        counters[event.datetime][tsdb.models.group][event.group.id] += 1
 
         user = event.data.get('sentry.interfaces.User')
         if user:
-            sets[tsdb.models.users_affected_by_group][event.datetime].add(
+            sets[event.datetime][tsdb.models.users_affected_by_group][event.group.id].add(
                 EventUser(
                     project=event.group.project,
                     ident=user.get('id'),
@@ -153,10 +153,10 @@ def get_tsdb_data(events):
             name=event.data.get('environment', ''),
         )
 
-        frequencies[tsdb.models.frequent_environments_by_group][event.datetime][event.group.id][environment.id] += 1
+        frequencies[event.datetime][tsdb.models.frequent_environments_by_group][event.group.id][environment.id] += 1
 
         if grouprelease is not None:
-            frequencies[tsdb.models.frequent_environments_by_group][event.datetime][event.group.id][grouprelease.id] += 1
+            frequencies[event.datetime][tsdb.models.frequent_environments_by_group][event.group.id][grouprelease.id] += 1
 
         return counters, sets, frequencies
 
@@ -164,8 +164,24 @@ def get_tsdb_data(events):
         collector,
         events,
         (
-            defaultdict(functools.partial(defaultdict, int)),   # [model][timestamp] -> count
-            defaultdict(functools.partial(defaultdict, set)),   # [model][timestamp] -> set(members)
+            defaultdict(
+                functools.partial(
+                    defaultdict,
+                    functools.partial(
+                        defaultdict,
+                        int,
+                    ),
+                )
+            ),  # [timestamp][model][key] -> count
+            defaultdict(
+                functools.partial(
+                    defaultdict,
+                    functools.partial(
+                        defaultdict,
+                        set,
+                    ),
+                ),
+            ),  # [timestamp][model][key] -> set(members)
             defaultdict(
                 functools.partial(
                     defaultdict,
@@ -177,7 +193,7 @@ def get_tsdb_data(events):
                         ),
                     ),
                 )
-            ),  # [model][timestamp][key][value] -> count
+            ),  # [timestamp][model][key][value] -> count
         ),
     )
 
@@ -234,12 +250,21 @@ def unmerge(hashes):
 
     events_with_releases = get_group_releases(group, events)
 
-    # TODO: tsdb: this needs to support multiple timestamp incrs
     counters, sets, frequencies = get_tsdb_data(events_with_releases)
 
-    # - increment new group
-    # - decrement old group
-    # - increment new frequency tables
-    # - increment new distinct counter
+    for timestamp, data in counters.items():
+        for model, keys in data.items():
+            for key, value in keys.items():
+                tsdb.incr(model, key, timestamp, value)
+                # TODO decrement old group(s)
+
+    for timestamp, data in sets.items():
+        for model, keys in data.items():
+            for key, values in keys.items():
+                # TODO: this could be better
+                tsdb.record(model, key, values, timestamp)
+
+    for timestamp, data in frequencies.items():
+        tsdb.record_frequency_multi(data.items(), timestamp)
 
     # TODO: activity thing for both groups
