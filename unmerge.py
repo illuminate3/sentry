@@ -10,7 +10,7 @@ from datetime import timedelta
 
 from sentry.constants import DEFAULT_LOGGER_NAME, LOG_LEVELS_MAP
 from sentry.event_manager import ScoreClause, generate_culprit, get_hashes_for_event, md5_from_hash
-from sentry.models import Event, EventMapping, Group, GroupHash, GroupRelease, GroupTagKey, GroupTagValue, Release, UserReport
+from sentry.models import Event, EventMapping, EventTag, Group, GroupHash, GroupRelease, GroupTagKey, GroupTagValue, Release, UserReport
 from sentry.tsdb import backend as tsdb
 
 
@@ -151,7 +151,10 @@ def unmerge(hashes):
     # - decrement old times seen
     # - fix old group attributes
 
-    Event.objects.filter(id__in=[event.id for event in events]).update(group_id=group.id)
+    event_id_set = set(event.id for event in events)
+
+    Event.objects.filter(id__in=event_id_set).update(group_id=group.id)
+    EventTag.objects.filter(event_id__in=event_id_set).update(group_id=group.id)
 
     event_id_set = set(event.event_id for event in events)
 
@@ -195,8 +198,6 @@ def unmerge(hashes):
 
             # TODO: decrement, possibly delete old tag records, also fix
             # first/last seen on these bad boys
-
-    # TODO: how the fuck to even deal with EventTag
 
     # TODO: tsdb: this needs to support multiple timestamp incrs
     counters, sets, frequencies = get_tsdb_data(events)
