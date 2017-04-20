@@ -65,23 +65,24 @@ def get_group_attributes(events):
     )
 
 
-def get_group_releases(events):
-    def process_event(releases, event):
+def get_group_releases(group, events):
+    attributes = {}
+
+    def process_event(event):
         release = event.get_tag('sentry:release')
+        if not release:
+            return None
 
         # XXX: literally no idea what the canonical source is for this btwn the
         # tag and data attr
         environment = event.data.get('environment', '')  # XXX: not nullable lmao
 
         key = (environment, release)
-        if not release:
-            return releases
-
-        if key in releases:
-            last_seen = releases[key]['last_seen']
-            releases[key]['last_seen'] = event.datetime if last_seen < event.datetime - timedelta(seconds=60) else last_seen
+        if key in attributes:
+            last_seen = attributes[key]['last_seen']
+            attributes[key]['last_seen'] = event.datetime if last_seen < event.datetime - timedelta(seconds=60) else last_seen
         else:
-            releases[key] = {
+            attributes[key] = {
                 'environment': environment,
                 'first_seen': event.datetime,
                 'last_seen': event.datetime,
@@ -91,13 +92,22 @@ def get_group_releases(events):
                 ).id,
             }
 
-        return releases
+        return key
 
-    return reduce(
-        process_event,
+    keys = map(process_event, events)
+
+    releases = {}
+    for key, attributes in attributes.items():
+        releases[key] = GroupRelease.objects.create(
+            project_id=group.project_id,
+            group_id=group.id,
+            **attributes
+        )
+
+    return zip(
         events,
-        {},
-    ).values()
+        map(releases.get, keys),
+    )
 
 
 def get_tag_data(events):
@@ -123,7 +133,7 @@ def get_tag_data(events):
 
 
 def get_tsdb_data(events):
-    def collector((counters, sets, frequencies), event):
+    def collector((counters, sets, frequencies), (event, grouprelease)):
         counters[tsdb.models.group][event.datetime] += 1
 
         user = event.data.get('sentry.interfaces.User')
@@ -145,7 +155,8 @@ def get_tsdb_data(events):
 
         frequencies[tsdb.models.frequent_environments_by_group][event.datetime][event.group.id][environment.id] += 1
 
-        # frequencies[tsdb.models.frequent_environments_by_group][event.datetime][group.id][grouprelease.id] += 1
+        if grouprelease is not None:
+            frequencies[tsdb.models.frequent_environments_by_group][event.datetime][event.group.id][grouprelease.id] += 1
 
         return counters, sets, frequencies
 
@@ -199,15 +210,6 @@ def unmerge(hashes):
         event_id__in=event_id_set,
     ).update(group=group)
 
-    for attributes in get_group_releases(events):
-        # TODO: technically this should also adjust the timestamps for
-        # ReleaseEnvironment too
-        GroupRelease.objects.create(
-            project_id=group.project_id,
-            group_id=group.id,
-            **attributes
-        )
-
     for key, values in get_tag_data(events).items():
         GroupTagKey.objects.create(
             project=group.project,
@@ -230,8 +232,10 @@ def unmerge(hashes):
             # TODO: decrement, possibly delete old tag records, also fix
             # first/last seen on these bad boys
 
+    events_with_releases = get_group_releases(group, events)
+
     # TODO: tsdb: this needs to support multiple timestamp incrs
-    counters, sets, frequencies = get_tsdb_data(events)
+    counters, sets, frequencies = get_tsdb_data(events_with_releases)
 
     # - increment new group
     # - decrement old group
