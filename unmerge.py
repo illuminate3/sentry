@@ -132,13 +132,13 @@ def get_tag_data(events):
     )
 
 
-def get_tsdb_data(events):
+def get_tsdb_data(group, events):
     def collector((counters, sets, frequencies), (event, grouprelease)):
-        counters[event.datetime][tsdb.models.group][event.group.id] += 1
+        counters[event.datetime][tsdb.models.group][group.id] += 1
 
         user = event.data.get('sentry.interfaces.User')
         if user:
-            sets[event.datetime][tsdb.models.users_affected_by_group][event.group.id].add(
+            sets[event.datetime][tsdb.models.users_affected_by_group][group.id].add(
                 EventUser(
                     project=event.group.project,
                     ident=user.get('id'),
@@ -153,10 +153,10 @@ def get_tsdb_data(events):
             name=event.data.get('environment', ''),
         )
 
-        frequencies[event.datetime][tsdb.models.frequent_environments_by_group][event.group.id][environment.id] += 1
+        frequencies[event.datetime][tsdb.models.frequent_environments_by_group][group.id][environment.id] += 1
 
         if grouprelease is not None:
-            frequencies[event.datetime][tsdb.models.frequent_environments_by_group][event.group.id][grouprelease.id] += 1
+            frequencies[event.datetime][tsdb.models.frequent_environments_by_group][group.id][grouprelease.id] += 1
 
         return counters, sets, frequencies
 
@@ -250,7 +250,7 @@ def unmerge(hashes):
 
     events_with_releases = get_group_releases(group, events)
 
-    counters, sets, frequencies = get_tsdb_data(events_with_releases)
+    counters, sets, frequencies = get_tsdb_data(group, events_with_releases)
 
     for timestamp, data in counters.items():
         for model, keys in data.items():
