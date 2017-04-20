@@ -272,11 +272,8 @@ def unmerge(hashes):
                     value=value,
                 )
                 record.times_seen = record.times_seen - count
-                if record.value == 0:
-                    record.delete()
-                    # TODO: trigger rewrite of GroupTagKey
-                else:
-                    record.save()
+                # TODO: this needs to either delete it or filter it from API responses
+                record.save()
 
             # TODO: fix first/last seen on these bad boys
 
