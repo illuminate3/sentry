@@ -5,8 +5,10 @@ configure()
 
 import functools
 import logging
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import timedelta
+
+from django.db.models import F
 
 from sentry.constants import DEFAULT_LOGGER_NAME, LOG_LEVELS_MAP
 from sentry.event_manager import ScoreClause, generate_culprit, get_hashes_for_event, md5_from_hash
@@ -213,8 +215,17 @@ def unmerge(hashes):
     group = Group.objects.create(**get_group_attributes(events))
     GroupHash.objects.filter(id__in=[hash.id for hash in hashes]).update(group=group)
 
-    # - decrement old times seen
-    # - fix old group attributes
+    # TODO: fix old group attributes
+
+    # XXX: lol
+    sources = reduce(
+        lambda sources, event: sources.update([event.group]) or sources,
+        events,
+        Counter()
+    )
+
+    for source, count in sources.items():
+        source.update(times_seen=F('times_seen') - count)
 
     event_id_set = set(event.id for event in events)
 
