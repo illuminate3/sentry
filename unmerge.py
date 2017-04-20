@@ -10,7 +10,7 @@ from datetime import timedelta
 
 from sentry.constants import DEFAULT_LOGGER_NAME, LOG_LEVELS_MAP
 from sentry.event_manager import ScoreClause, generate_culprit, get_hashes_for_event, md5_from_hash
-from sentry.models import Event, EventMapping, EventTag, Group, GroupHash, GroupRelease, GroupTagKey, GroupTagValue, Release, UserReport
+from sentry.models import Event, EventMapping, EventTag, EventUser, Group, GroupHash, GroupRelease, GroupTagKey, GroupTagValue, Release, UserReport
 from sentry.tsdb import backend as tsdb
 
 
@@ -125,17 +125,39 @@ def get_tag_data(events):
 def get_tsdb_data(events):
     def collector((counters, sets, frequencies), event):
         counters[tsdb.models.group][event.datetime] += 1
-        # sets[tsdb.models.users_affected_by_group][event.datetime].add(event_user.tag_value)
-        # frequencies: tsdb.models.frequent_environments_by_group
-        # frequencies: tsdb.models.frequent_releases_by_group
+
+        user = event.data.get('sentry.interfaces.User')
+        if user:
+            sets[tsdb.models.users_affected_by_group][event.datetime].add(
+                EventUser(
+                    project=event.group.project,
+                    ident=user.get('id'),
+                    email=user.get('email'),
+                    username=user.get('username'),
+                    ip_address=user.get('ip_address'),
+                ).tag_value
+            )
+
+        # frequencies[tsdb.models.frequent_environments_by_group][event.datetime][group.id][environment.id] += 1
+        # frequencies[tsdb.models.frequent_environments_by_group][event.datetime][group.id][grouprelease.id] += 1
+
         return counters, sets, frequencies
+
     return reduce(
         collector,
         events,
         (
-            defaultdict(functools.partial(defaultdict, int)),
-            defaultdict(functools.partial(defaultdict, set)),
-            defaultdict(functools.partial(defaultdict, dict)),
+            defaultdict(functools.partial(defaultdict, int)),   # [model][timestamp] -> count
+            defaultdict(functools.partial(defaultdict, set)),   # [model][timestamp] -> set(members)
+            defaultdict(
+                functools.partial(
+                    defaultdict,
+                    functools.partial(
+                        defaultdict,
+                        int,
+                    ),
+                )
+            ),  # [model][timestamp][key][value] -> count
         ),
     )
 
