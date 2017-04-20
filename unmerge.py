@@ -115,13 +115,20 @@ def get_tag_data(events):
         for key, value in event.get_tags():
             values = tags.setdefault(key, {})
             if value not in values:
-                values[value] = (1, event.datetime, event.datetime)
+                values[value] = (
+                    1,
+                    event.datetime,
+                    event.datetime,
+                    {event.group.id: 1},
+                )
             else:
-                count, first_seen, last_seen = values[value]
+                count, first_seen, last_seen, sources = values[value]
+                sources[event.group.id] = sources.get(event.group.id, 0) + 1
                 values[value] = (
                     count + 1,
                     first_seen,
                     event.datetime,
+                    sources,
                 )
         return tags
 
@@ -234,7 +241,7 @@ def unmerge(hashes):
             values_seen=len(values),
         )
 
-        for value, (count, first_seen, last_seen) in values.items():
+        for value, (count, first_seen, last_seen, sources) in values.items():
             GroupTagValue.objects.create(
                 project=group.project,
                 group=group,
@@ -245,8 +252,22 @@ def unmerge(hashes):
                 first_seen=last_seen,
             )
 
-            # TODO: decrement, possibly delete old tag records, also fix
-            # first/last seen on these bad boys
+            for source, count in sources.items():
+                # TODO: this is obviously bad
+                record = GroupTagValue.objects.get(
+                    project=group.project,
+                    group=source,
+                    key=key,
+                    value=value,
+                )
+                record.times_seen = record.times_seen - count
+                if record.value == 0:
+                    record.delete()
+                    # TODO: trigger rewrite of GroupTagKey
+                else:
+                    record.save()
+
+            # TODO: fix first/last seen on these bad boys
 
     events_with_releases = get_group_releases(group, events)
 
