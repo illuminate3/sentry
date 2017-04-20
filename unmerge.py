@@ -10,7 +10,7 @@ from datetime import timedelta
 
 from sentry.constants import DEFAULT_LOGGER_NAME, LOG_LEVELS_MAP
 from sentry.event_manager import ScoreClause, generate_culprit, get_hashes_for_event, md5_from_hash
-from sentry.models import Event, EventMapping, EventTag, EventUser, Group, GroupHash, GroupRelease, GroupTagKey, GroupTagValue, Release, UserReport
+from sentry.models import Environment, Event, EventMapping, EventTag, EventUser, Group, GroupHash, GroupRelease, GroupTagKey, GroupTagValue, Release, UserReport
 from sentry.tsdb import backend as tsdb
 
 
@@ -138,7 +138,13 @@ def get_tsdb_data(events):
                 ).tag_value
             )
 
-        # frequencies[tsdb.models.frequent_environments_by_group][event.datetime][group.id][environment.id] += 1
+        environment = Environment.objects.get(
+            projects=event.group.project,
+            name=event.data.get('environment', ''),
+        )
+
+        frequencies[tsdb.models.frequent_environments_by_group][event.datetime][event.group.id][environment.id] += 1
+
         # frequencies[tsdb.models.frequent_environments_by_group][event.datetime][group.id][grouprelease.id] += 1
 
         return counters, sets, frequencies
@@ -154,7 +160,10 @@ def get_tsdb_data(events):
                     defaultdict,
                     functools.partial(
                         defaultdict,
-                        int,
+                        functools.partial(
+                            defaultdict,
+                            int,
+                        ),
                     ),
                 )
             ),  # [model][timestamp][key][value] -> count
