@@ -3,12 +3,15 @@ from __future__ import absolute_import
 from sentry.runner import configure
 configure()
 
+import functools
 import logging
+from collections import defaultdict
 from datetime import timedelta
 
 from sentry.constants import DEFAULT_LOGGER_NAME, LOG_LEVELS_MAP
 from sentry.event_manager import ScoreClause, generate_culprit, get_hashes_for_event, md5_from_hash
 from sentry.models import Event, EventMapping, Group, GroupHash, GroupRelease, GroupTagKey, GroupTagValue, Release, UserReport
+from sentry.tsdb import backend as tsdb
 
 
 def get_events(hashes):
@@ -119,6 +122,24 @@ def get_tag_data(events):
     )
 
 
+def get_tsdb_data(events):
+    def collector((counters, sets, frequencies), event):
+        counters[tsdb.models.group][event.datetime] += 1
+        # sets[tsdb.models.users_affected_by_group][event.datetime].add(event_user.tag_value)
+        # frequencies: tsdb.models.frequent_environments_by_group
+        # frequencies: tsdb.models.frequent_releases_by_group
+        return counters, sets, frequencies
+    return reduce(
+        collector,
+        events,
+        (
+            defaultdict(functools.partial(defaultdict, int)),
+            defaultdict(functools.partial(defaultdict, set)),
+            defaultdict(functools.partial(defaultdict, dict)),
+        ),
+    )
+
+
 def unmerge(hashes):
     # TODO: lol transactions
     # TODO: make it iterative
@@ -177,7 +198,9 @@ def unmerge(hashes):
 
     # TODO: how the fuck to even deal with EventTag
 
-    # TODO: tsdb
+    # TODO: tsdb: this needs to support multiple timestamp incrs
+    counters, sets, frequencies = get_tsdb_data(events)
+
     # - increment new group
     # - decrement old group
     # - increment new frequency tables
